@@ -1,138 +1,112 @@
 #!/usr/bin/env python3
 '''
-# Script para el control 1 de redes,
+# Script para el control 1 de redes, primer semestre 2020
 por José Espina (joseguillermoespina@gmail.com)
- 
+
+El script permite crear un id de cliente, descargar (arbitrariamente) el archivo "control1.pdf", y
+continuar la descarga en caso de detener el cliente 
+
 ## Modo de uso:
- * Ejecutar netem como superusuario para simular pérdida de paquetes y retraso en la red
- tc qdisc add dev lo root netem loss 20.0% delay 0.5s
- * Ejecutar el servidor. Fijarse que el archivo a descargar exista
- ./control1 servidor ""
- * Hacer una solitud http GET con curl en la dirección que aparece por stdout en el paso anterior
- ejemplo: curl 127.0.0.1:9999
+ 1) Ejecutar el servidor
+ 
+ $ ./control1
+ 
+ Si todo marcha bien, el sistema operativo le asignará un puerto. Por stdout verá un mensaje similar al siguiente:
+ "Servidor funcionando en 127.0.0.1:59286"
+
+ 2) Solicitar un id único de cliente a través de una petición GET. Ejemplo, usando cURL
+
+ $ curl 127.0.0.1:59286 --http0.9
+
+ Retornará por stout un identificador único. Por ejemplo: 98ff9a06-6707-4c17-b215-a6eb51639193
+
+ 3) Hacer nuevamente una solitud http GET con curl en la dirección que aparece por stdout en el primer paso,
+ más el identificador del paso anterior, como en el ejemplo a continuación
+
+ $ curl 127.0.0.1:59424/98ff9a06-6707-4c17-b215-a6eb51639193 --http0.9 --output archivo.parte1
+
+ 3.1) Antes de que termine la descarga, cancelar el curl con Control-C
+
+ 4) Continuar la descarga con curl, especificando otro nombre de archivo, para evitar sobre escribir el primero
+
+ $ curl 127.0.0.1:59424/98ff9a06-6707-4c17-b215-a6eb51639193 --http0.9 --output archivo.parte2
+
+ 5) Concatenar los dos archivos en un tercero para comprobar que la descarga fue exitosa
+
+ $ cat archivo.parte1 archivo.parte2 > archivo.pdf
+
 '''
+import os
 import argparse
 import socket
 import logging
 import sys
 import socketserver
 import threading
+import uuid
+import time
+
+BUFFER_ENTRADA = 128
+TAMANO_PEDAZOS = 512
+RUTA_ARCHIVO_SERVIDO = 'control1.pdf'
 
 logging.basicConfig(level=logging.DEBUG)
+dict_cliente_progeso = dict()
 
-class EchoRequestHandler(socketserver.BaseRequestHandler):
 
-    def __init__(self, request, client_address, server):
-        self.logger = logging.getLogger('EchoRequestHandler')
-        self.logger.debug('__init__')
-        socketserver.BaseRequestHandler.__init__(self, request,client_address,server)
-        return
-
-    def setup(self):
-        self.logger.debug('setup')
-        return socketserver.BaseRequestHandler.setup(self)
+class Control_uno_handler(socketserver.BaseRequestHandler):
 
     def handle(self):
-        self.logger.debug('handle')
-        print(self.request.getpeername())
-        # Echo the back to the client
-        data = self.request.recv(128)
+        data = self.request.recv(BUFFER_ENTRADA)
         str_data = data.decode('utf-8')
-        print(str_data)
-        print(str_data.startswith('GET /'))
-        self.logger.debug('recv()->"%s"', data)
-        self.request.send(data)
+        if not str_data.startswith('GET /'):
+            return
+        if str_data[5] == ' ':
+            cliente_id = str.encode(str(uuid.uuid4()))
+            self.request.send(cliente_id)
+            return
+        else:
+            cliente_id = str_data[5:41]
+            progreso = dict_cliente_progeso[cliente_id] if cliente_id in dict_cliente_progeso.keys(
+            ) else 0
+            filename = RUTA_ARCHIVO_SERVIDO
+            total = os.path.getsize(RUTA_ARCHIVO_SERVIDO)
+            total_sent = progreso
+            with open(filename, 'rb') as output:
+                output.seek(progreso)
+                while True:
+                    data = output.read(TAMANO_PEDAZOS)
+                    if not data:
+                        del dict_cliente_progeso[cliente_id]
+                        break
+                    try:
+                        self.request.send(data)
+                    except ConnectionResetError:
+                        print('El cliente {} alcanzó a descargar {} bytes'.format(
+                            cliente_id, dict_cliente_progeso[cliente_id]))
+                        return
+                    total_sent += len(data)
+                    dict_cliente_progeso[cliente_id] = total_sent
+                    print('{} de {} bytes enviados'.format(total_sent, total),
+                          sep=' ', end='\r', flush=True)
+                    time.sleep(0.05)
+                print('')
         return
 
-    def finish(self):
-        self.logger.debug('finish')
-        return socketserver.BaseRequestHandler.finish(self)
-    
-class EchoServer(socketserver.TCPServer):
 
-    def __init__(self, server_address, handler_class=EchoRequestHandler,):
-        self.logger = logging.getLogger('EchoServer')
-        self.logger.debug('__init__')
-        socketserver.TCPServer.__init__(self, server_address, handler_class)
-        return
-
-    def server_activate(self):
-        self.logger.debug('server_activate')
-        socketserver.TCPServer.server_activate(self)
-        return
-
-    def serve_forever(self, poll_interval=0.5):
-        self.logger.debug('waiting for request')
-        self.logger.info(
-            'Handling requests, press <Ctrl-C> to quit'
-        )
-        socketserver.TCPServer.serve_forever(self, poll_interval)
-        return
-
-    def handle_request(self):
-        self.logger.debug('handle_request')
-        return socketserver.TCPServer.handle_request(self)
-
-    def verify_request(self, request, client_address):
-        self.logger.debug('verify_request(%s, %s)',
-                          request, client_address)
-        return socketserver.TCPServer.verify_request(
-            self, request, client_address,
-        )
-
-    def process_request(self, request, client_address):
-        self.logger.debug('process_request(%s, %s)',
-                          request, client_address)
-        return socketserver.TCPServer.process_request(
-            self, request, client_address,
-        )
-
-    def server_close(self):
-        self.logger.debug('server_close')
-        return socketserver.TCPServer.server_close(self)
-
-    def finish_request(self, request, client_address):
-        self.logger.debug('finish_request(%s, %s)',
-                          request, client_address)
-        return socketserver.TCPServer.finish_request(
-            self, request, client_address,
-        )
-
-    def close_request(self, request_address):
-        self.logger.debug('close_request(%s)', request_address)
-        return socketserver.TCPServer.close_request(
-            self, request_address,
-        )
-
-    def shutdown(self):
-        self.logger.debug('shutdown()')
-        return socketserver.TCPServer.shutdown(self)
-
-def server(interface, port):
-    address = ('localhost', 9999)  # let the kernel assign a port
-    server = EchoServer(address, EchoRequestHandler)
-    ip, port = server.server_address  # what port was assigned?
-    print('servidor {ip}:{puerto}'.format(ip=ip, puerto=port))
-    try :
-        server.serve_forever()
-    except KeyboardInterrupt :
+def server():
+    address = ('localhost', 0)
+    servidor = socketserver.TCPServer(address, Control_uno_handler)
+    ip, port = servidor.server_address  # what port was assigned?
+    print('Servidor funcionando en {ip}:{puerto}'.format(ip=ip, puerto=port))
+    try:
+        servidor.serve_forever()
+    except KeyboardInterrupt:
         pass
-    finally :
-        server.shutdown()
-        server.socket.close()
-        print("Gracias!\n")
+    finally:
+        servidor.shutdown()
+        servidor.socket.close()
 
-def client(host, port):
-    pass
 
 if __name__ == '__main__':
-    choices = {'client': client, 'server': server}
-    parser = argparse.ArgumentParser(description='Send and receive over TCP')
-    parser.add_argument('role', choices=choices, help='which role to play')
-    parser.add_argument('host', help='interface the server listens at;'
-                        ' host the client sends to')
-    parser.add_argument('-p', metavar='PORT', type=int, default=1060,
-                        help='TCP port (default 1060)')
-    args = parser.parse_args()
-    function = choices[args.role]
-    function(args.host, args.p)
+    server()
