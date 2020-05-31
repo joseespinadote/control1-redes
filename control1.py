@@ -39,44 +39,70 @@ continuar la descarga en caso de detener el cliente
 import os
 import argparse
 import socket
-import logging
 import sys
 import socketserver
 import threading
 import uuid
 import time
+from datetime import datetime
+from time import mktime
 
+# Constantes globales
 BUFFER_ENTRADA = 128
 TAMANO_PEDAZOS = 512
 TAMANO_UUID = 36
 RUTA_ARCHIVO_SERVIDO = 'word.doc'
+DICT_RESPUESTAS_HTTP = {200: "HTTP/1.1 200 OK\n",
+                        400: "HTTP/1.1 400 Bad Request\n",
+                        403: "HTTP/1.1 403 Forbidden\n",
+                        404: "HTTP/1.1 404 Not Found\n"}
 
-logging.basicConfig(level=logging.DEBUG)
+# Variables globales
 dict_cliente_progeso = dict()
 
 
 class Control_uno_handler(socketserver.BaseRequestHandler):
 
+    def genera_cabeceras(self, codigo, tamanio_respuesta_bytes, binario=False):
+        now = datetime.now()
+        stamp = mktime(now.timetuple())
+        str_headers = DICT_RESPUESTAS_HTTP[codigo]
+        str_headers += "Date: " + str(format_date_time(stamp)) + "\n"
+        str_headers += "Server: ~el joServer 'the espinator'~ v0.1\n"
+        str_headers += "Last-Modified: " + str(format_date_time(stamp)) + "\n"
+        str_headers += "Accept-Ranges: bytes\n"
+        str_headers += "Content-Length: "+str(tamanio_respuesta_bytes)+"\n"
+        str_headers += "Cache-Control: max-age=0\n"
+        str_headers += "Expires: " + str(format_date_time(stamp)) + "\n"
+        if binario:
+            str_headers += "Content-Type: application/octet-stream\n"
+        else:
+            str_headers += "Content-Type: text/plain\n"
+        str_headers += "\n"
+        return str_headers
+
     def handle(self):
         data = self.request.recv(BUFFER_ENTRADA)
         str_data = data.decode('utf-8')
+        # Si la solicitud no es GET: error 403 (prohibido)
         if not str_data.startswith('GET /'):
+            headers = self.genera_cabeceras(403, 0)
+            self.request.send(str.encode(headers))
             return
+        # Si no viene id unico de cliente, se asume que un cliente está pidiendo uno
         if str_data[5] == ' ':
             cliente_id = str.encode(str(uuid.uuid4()))
-            str_headers = "HTTP/1.1 200 OK\n"
-            str_headers += "Date: Sat, 30 May 2020 04:55:14 GMT\n"
-            str_headers += "Server: Apache/2.4.10\n"
-            str_headers += "Last-Modified: Wed, 02 Aug 2017 12:44:32 GMT\n"
-            str_headers += "Accept-Ranges: bytes\n"
-            str_headers += "Content-Length: "+str(TAMANO_UUID)+"\n"
-            str_headers += "Cache-Control: max-age=0\n"
-            str_headers += "Expires: Sat, 30 May 2020 04:55:14 GMT\n"
-            #str_headers += "Content-Type: application/msword\n\n"
-            str_headers += "Content-Type: text/plain\n\n"
-            self.request.send(str.encode(str_headers))
+            # Si el id unico de cliente no existe: error 404 (no encontrado)
+            if cliente_id not in dict_cliente_progeso.keys():
+                headers = self.genera_cabeceras(404, 0)
+                self.request.send(str.encode(headers))
+                return
+            headers = self.genera_cabeceras(200, TAMANO_UUID, False)
+            self.request.send(str.encode(headers))
             self.request.send(cliente_id)
             return
+        # Si viene id de cliente, y está en el diccionario, entonces es porque
+        # se quiere retomar una descarga
         else:
             cliente_id = str_data[5:5+TAMANO_UUID]
             progreso = dict_cliente_progeso[cliente_id] if cliente_id in dict_cliente_progeso.keys(
@@ -94,7 +120,6 @@ class Control_uno_handler(socketserver.BaseRequestHandler):
                 str_headers += "Content-Length: "+str(100352-progreso)+"\n"
                 str_headers += "Cache-Control: max-age=0\n"
                 str_headers += "Expires: Sat, 30 May 2020 04:55:14 GMT\n"
-                #str_headers += "Content-Type: application/msword\n\n"
                 str_headers += "Content-Type: application/octet-stream\n\n"
                 self.request.send(str.encode(str_headers))
                 while True:

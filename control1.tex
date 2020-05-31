@@ -1,5 +1,11 @@
 \documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
 \usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[ruled,vlined]{algorithm2e}
+
+\graphicspath{{C:/Users/josee/Documents/mag/redes/control1-redes/imagenes/}}
 
 \begin{document}
 
@@ -7,10 +13,83 @@
 \author{José Espina\\joseguillermoespina@gmail.com}
 \date{}
 \maketitle
-\section{Instrucción}
+\section{Contexto, problema y requerimientos}
+Uno de los grandes problemas que ha aparecido con la movilidad de usuarios es la pérdida de conexión entre cliente y servidor ya sea por cambio de antena, paso de internet móvil a wi-fi, de wi-fi a cable, y viceversa. Esto lleva a que se sobrecargue la inteligencia por el lado del servidor (si se usa UDP) o se cierren/abran conexiones con el consiguiente overhead en handshaking (si se usa TCP). Algunos ingenieros señalan que la capa de transporte no tiene por qué preocuparse de eso y debiesen ser las capas superiores las encargadas. En esta actividad se le pedirá diseñar o modificar un protocolo de comunicaciones para este nuevo escenario
+
+A partir de las instrucciones, se identifican los siguientes requerimientos:
+\begin{enumerate}
+\item Pruebe su solución construyendo un servidor http que implemente GET, recibiendo peticiones de un cliente “móvil” (puede construir una función UniqID() para identificar cada dispositivo) y le entregue a cada dispositivo su respuesta, sin repetir ni equivocarse
+\item El cliente debiese poder conectarse al servidor, pedir un archivo, recibir parte de él, desconectarse, conectarse de nuevo, pedir un archivo y recibir el resto
+\item Su solución debe escribirse en python usando sockets, sin otras librerías para redes y NO DEBE caerse cuando el servidor le responde a un cliente ``inexistente" (que se está moviendo)
+\item La entrega serán dos archivos: un .zip con su solución en python de su cliente y servidor (código fuente), y un PDF donde estará un pequeño informe con sus decisiones de diseño, supuestos seguidos (que sean razonable, no pueden suponer que sólo se conectarán una vez, por ejemplo)
+\item Responda justificadamente a las siguientes preguntas:
+\begin{enumerate}
+\item ¿Qué pasa cuando el cliente termina de recibir un archivo pero igual lo sigue pidiendo? ¿Por qué?
+\item ¿Cómo funciona su protocolo si hay múltiples clientes? digamos que su servidor tiene la misma tasa de consultas que Google.
+\item A partir de la pregunta anterior ¿Cambia su respuesta si en vez de texto responde con multimedia (tamaño > 1 MB)? ¿Por qué?
+¿Su solución sigue siendo válida si se usan proxies http? ¿Por qué?
+\end{enumerate}
+\end{enumerate}
+
+\section{Propuesta de protocolo}
+
+Se propone la creación de un pequeño protocolo que funcionará en las capas superiores a la de transporte, usando TCP. Se implementa un prototipo a través del \textit{framework} socketserver de Python 3\cite{web_python3_socketserver}. La funcionalidad básica del software se representa con el siguiente diagrama de flujo y algoritmo
+
+\begin{figure}[hp]
+\centering
+\includegraphics[scale=0.4]{diagramaflujo}
+\caption{Diagrama de flujo de la solución propuesta}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Solicitud de un cliente mediante socket abierto}
+\KwOut{Nuevo identificador de cliente, ó ``chunks" de datos de archivo (texto o binario) al cliente}
+ inicializacion variables y constantes\;
+ request = socket.recv(SIZE)\;
+ \eIf{type(request) != GET}{
+ 	socket.send(ERROR\_400)\;
+ }{
+   \eIf{id\_cliente in request}{
+     file.seek(progresos[id\_cliente])\;
+     data = file.read(CHUNK\_SIZE)\;
+     socket.send(OK\_200)\;
+     \While{data}{
+       socket.send(data)\;
+       progresos[id\_cliente] += len(data)\;
+       data = file.read(CHUNK\_SIZE)\;
+     }
+   }{
+     id\_cliente=uuid.uuid4()\;
+     progresos[id\_cliente] = 0\;
+     socket.send(OK\_200)\;
+     socket.send(id\_cliente)\;
+   }
+}
+\caption{Prototipo mini-protocolo}
+\end{algorithm}
+
+Las razones de la elección de TCP sobre UDP en la capa de transporte son las siguientes
+
+\begin{enumerate}
+\item El servidor enviará archivos texto plano y binarios. Es importante que los paquetes lleguen íntegros, y UDP no lo asegura
+\item No se requiere hacer \textit{broadcast} de paquetes
+\item La solución usa parte de HTTP para confeccionar la respuesta, y en general HTTP se usa sobre TCP por ser un protocolo confiable\cite{rfc_2616}
+\end{enumerate}
+
+\section{La implementación}
+
+Se implementó un \textit{handler} básico para cumplir con los requerimientos nombrados en la primera sección El código se adjunta con la tarea y, también, está disponible en un repositorio privado en GitHub (\url{https://github.com/joseespinadote/control1-redes}, solicitar acceso al autor). Los partes fundamentales de la implementación se explican a continuación:
+
+
+
+
+
+
 \cite{libro_redes_python}Libro
 \begin{thebibliography}{9}
+\bibitem{web_python3_socketserver} Documentación oficial del \textit{framework} socketserver de Python 3 \url{https://docs.python.org/3/library/socketserver.html}, visitado durante Mayo del 2020
+\bibitem{rfc_2616} RFC 2616 \url{https://www.ietf.org/rfc/rfc2616.txt}
 \bibitem{libro_redes_python} Rhodes, B., \& Goerzen, J. (2010). Foundations of Python network programming: the comprehensive guide to building network applications with Python. New York: Apress.
 \end{thebibliography}
-
 \end{document}
