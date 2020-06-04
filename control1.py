@@ -44,14 +44,16 @@ import socketserver
 import threading
 import uuid
 import time
+import mimetypes
+# para representar la fecha RFC 1123
+from wsgiref.handlers import format_date_time
 from datetime import datetime
 from time import mktime
 
 # Constantes globales
-BUFFER_ENTRADA = 128
+BUFFER_ENTRADA = 256
 TAMANO_PEDAZOS = 512
 TAMANO_UUID = 36
-RUTA_ARCHIVO_SERVIDO = 'word.doc'
 DICT_RESPUESTAS_HTTP = {200: "HTTP/1.1 200 OK\n",
                         400: "HTTP/1.1 400 Bad Request\n",
                         403: "HTTP/1.1 403 Forbidden\n",
@@ -63,7 +65,7 @@ dict_cliente_progeso = dict()
 
 class Control_uno_handler(socketserver.BaseRequestHandler):
 
-    def genera_cabeceras(self, codigo, tamanio_respuesta_bytes, binario=False):
+    def genera_cabeceras(self, codigo, tamanio_respuesta_bytes, content_type="text/plain"):
         now = datetime.now()
         stamp = mktime(now.timetuple())
         str_headers = DICT_RESPUESTAS_HTTP[codigo]
@@ -74,57 +76,52 @@ class Control_uno_handler(socketserver.BaseRequestHandler):
         str_headers += "Content-Length: "+str(tamanio_respuesta_bytes)+"\n"
         str_headers += "Cache-Control: max-age=0\n"
         str_headers += "Expires: " + str(format_date_time(stamp)) + "\n"
-        if binario:
-            str_headers += "Content-Type: application/octet-stream\n"
-        else:
-            str_headers += "Content-Type: text/plain\n"
+        str_headers += "Content-Type: " + content_type + "\n"
         str_headers += "\n"
         return str_headers
 
     def handle(self):
         data = self.request.recv(BUFFER_ENTRADA)
         str_data = data.decode('utf-8')
-        # Si la solicitud no es GET: error 403 (prohibido)
+
+        # Se comprueba si la llamada es de tipo GET
         if not str_data.startswith('GET /'):
             headers = self.genera_cabeceras(403, 0)
             self.request.send(str.encode(headers))
             return
-        # Si no viene id unico de cliente, se asume que un cliente está pidiendo uno
+
+        # Cuando no viene el id de cliente
         if str_data[5] == ' ':
-            cliente_id = str.encode(str(uuid.uuid4()))
-            # Si el id unico de cliente no existe: error 404 (no encontrado)
+            str_cliente_id = str(uuid.uuid4())
+            cliente_id = str.encode(str_cliente_id)
+            dict_cliente_progeso[str_cliente_id] = 0
+            headers = self.genera_cabeceras(200, TAMANO_UUID)
+            self.request.send(str.encode(headers))
+            self.request.send(cliente_id)
+            return
+
+        # Si viene el id de cliente
+        else:
+            parametros_GET = str_data.split(" ")[1].split("/")
+            cliente_id = parametros_GET[1]
+            archivo = parametros_GET[2]
+            tipo_contenido = mimetypes.guess_type(archivo)[0]
+            total = os.path.getsize(archivo)
+
             if cliente_id not in dict_cliente_progeso.keys():
                 headers = self.genera_cabeceras(404, 0)
                 self.request.send(str.encode(headers))
                 return
-            headers = self.genera_cabeceras(200, TAMANO_UUID, False)
-            self.request.send(str.encode(headers))
-            self.request.send(cliente_id)
-            return
-        # Si viene id de cliente, y está en el diccionario, entonces es porque
-        # se quiere retomar una descarga
-        else:
-            cliente_id = str_data[5:5+TAMANO_UUID]
-            progreso = dict_cliente_progeso[cliente_id] if cliente_id in dict_cliente_progeso.keys(
-            ) else 0
-            filename = RUTA_ARCHIVO_SERVIDO
-            total = os.path.getsize(RUTA_ARCHIVO_SERVIDO)
-            total_sent = progreso
-            with open(filename, 'rb') as output:
+
+            progreso = dict_cliente_progeso[cliente_id]
+            total_enviado = progreso
+            with open(archivo, 'rb') as output:
                 output.seek(progreso)
-                str_headers = "HTTP/1.1 200 OK\n"
-                str_headers += "Date: Sat, 30 May 2020 04:55:14 GMT\n"
-                str_headers += "Server: Apache/2.4.10\n"
-                str_headers += "Last-Modified: Wed, 02 Aug 2017 12:44:32 GMT\n"
-                str_headers += "Accept-Ranges: bytes\n"
-                str_headers += "Content-Length: "+str(100352-progreso)+"\n"
-                str_headers += "Cache-Control: max-age=0\n"
-                str_headers += "Expires: Sat, 30 May 2020 04:55:14 GMT\n"
-                str_headers += "Content-Type: application/octet-stream\n\n"
+                str_headers = self.genera_cabeceras(
+                    200, total-progreso, tipo_contenido)
                 self.request.send(str.encode(str_headers))
                 while True:
                     data = output.read(TAMANO_PEDAZOS)
-                    #data = output.read()
                     if not data:
                         del dict_cliente_progeso[cliente_id]
                         break
@@ -134,19 +131,20 @@ class Control_uno_handler(socketserver.BaseRequestHandler):
                         print('El cliente {} alcanzó a descargar {} bytes'.format(
                             cliente_id, dict_cliente_progeso[cliente_id]))
                         return
-                    total_sent += len(data)
-                    dict_cliente_progeso[cliente_id] = total_sent
-                    print('{} de {} bytes enviados'.format(total_sent, total),
+                    total_enviado += len(data)
+                    dict_cliente_progeso[cliente_id] = total_enviado
+                    print('{} de {} bytes enviados'.format(total_enviado, total),
                           sep=' ', end='\r', flush=True)
                     time.sleep(0.05)
                 print('')
         return
 
 
-def server():
-    address = ('localhost', 0)
+if __name__ == '__main__':
+    #address = ('localhost', 0)
+    address = ('localhost', 9999)
     servidor = socketserver.TCPServer(address, Control_uno_handler)
-    ip, port = servidor.server_address  # what port was assigned?
+    ip, port = servidor.server_address
     print('Servidor funcionando en {ip}:{puerto}'.format(ip=ip, puerto=port))
     try:
         servidor.serve_forever()
@@ -155,7 +153,3 @@ def server():
     finally:
         servidor.shutdown()
         servidor.socket.close()
-
-
-if __name__ == '__main__':
-    server()
