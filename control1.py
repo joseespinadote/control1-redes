@@ -1,56 +1,46 @@
 #!/usr/bin/env python3
 '''
-# Script para el control 1 de redes, primer semestre 2020
-por José Espina (joseguillermoespina@gmail.com)
 
-El script permite crear un id de cliente, descargar (arbitrariamente) el archivo "control1.pdf", y
-continuar la descarga en caso de detener el cliente
+Script Python 3 para el Control 1 de Redes,
+Primer semestre 2020,
+Creado por José Espina (joseguillermoespina@gmail.com)
 
-# Modo de uso:
- 1) Ejecutar el servidor
+**Ver el informe (control1.pdf) para hacerlo funcionar**
 
- $ ./control1
+Consideraciones:
 
- Si todo marcha bien, el sistema operativo le asignará un puerto. Por stdout verá un mensaje similar al siguiente:
- "Servidor funcionando en 127.0.0.1:59286"
-
- 2) Solicitar un id único de cliente a través de una petición GET. Ejemplo, usando cURL
-
- $ curl 127.0.0.1:59286
-
- Retornará por stout un identificador único. Por ejemplo: 98ff9a06-6707-4c17-b215-a6eb51639193
-
- 3) Hacer nuevamente una solitud http GET con curl en la dirección que aparece por stdout en el primer paso,
- más el identificador del paso anterior, como en el ejemplo a continuación
-
- $ curl 127.0.0.1:59424/98ff9a06-6707-4c17-b215-a6eb51639193 --output archivo.parte1
-
- 3.1) Antes de que termine la descarga, cancelar el curl con Control-C
-
- 4) Continuar la descarga con curl, especificando otro nombre de archivo, para evitar sobre escribir el primero
-
- $ curl 127.0.0.1:59424/98ff9a06-6707-4c17-b215-a6eb51639193 --output archivo.parte2
-
- 5) Concatenar los dos archivos en un tercero para comprobar que la descarga fue exitosa
-
- $ cat archivo.parte1 archivo.parte2 > archivo.pdf
-
+ - Se añadieron comentarios para mejorar la comprensión del script
+ - La explicación de qué hace cada parte del código, variables y 
+   constantes globales, se encuentran en el informe
 '''
+# "os" se usó para obtener metadata del archivo a enviar al cliente
 import os
-import argparse
-import socket
-import sys
+# "socketserver" librería del framework nativo de python para levantar
+# un servidor socket (single thread) y hacer "override" de sus los
+# métodos de las clases pre-fabricadas para levantar servicios sobre
+# UDP y TCP muy rapidamente
 import socketserver
+# "threading" no se usa en esta versión. Pero se deja comentario para
+# el caso que se quiera implementar un servidor multi-thread, que permi-
+# tirá atender a varios clientes de manera simultánea
 import threading
+# "uuid" se usó para generar el id único de cliente
 import uuid
+# "time" se usó para ralentizar la transferencia del envío de "chunks"
+# de datos con "sleep". Da tiempo de alcanzar a "botar" al cliente con
+# control-c con fines de experimentación
 import time
+# "mimetypes" permite extraer el texto descriptivo para se usado en
+# la cabecera "Content-type" y cumplir con HTTP 1.1
 import mimetypes
-# para representar la fecha RFC 1123
+# "format_date_time" y "mktime" permiten representar la fecha en formato
+# del RFC 1123
 from wsgiref.handlers import format_date_time
-from datetime import datetime
 from time import mktime
+# "datetime" se usa para obtener la fecha de ahora
+from datetime import datetime
 
-# Constantes globales
+# Definción de constantes globales
 BUFFER_ENTRADA = 256
 TAMANO_PEDAZOS = 512
 TAMANO_UUID = 36
@@ -141,11 +131,28 @@ class Control_uno_handler(socketserver.BaseRequestHandler):
 
 
 if __name__ == '__main__':
-    #address = ('localhost', 0)
-    address = ('localhost', 9999)
+    address = ('localhost', 0)
+    # Comentar la línea anterior y descomentar la siguiente
+    # para dejar el puerto fijo en 9999 (si es que sistema
+    # operativo lo permite)
+    #address = ('localhost', 9999)
+
+    # Se configura el seridor y se pasa clase handler que
+    # hereda de socketserver.BaseRequestHandler
     servidor = socketserver.TCPServer(address, Control_uno_handler)
     ip, port = servidor.server_address
     print('Servidor funcionando en {ip}:{puerto}'.format(ip=ip, puerto=port))
+
+    # Experimental: para probar atender múltiples clientes
+    # descimentar las líneas a continuación, y comentar
+    # el resto del script
+
+    # t = threading.Thread(target=servidor.serve_forever)
+    # t.setDaemon(True)
+    # t.start()
+
+    # El servidor "servirá" para siempre, hasta que se le detenga
+    # con un ctrl + c
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
